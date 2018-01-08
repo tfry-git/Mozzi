@@ -337,7 +337,19 @@ is output, so the resolution is 1/AUDIO_RATE (61 microseconds when AUDIO_RATE is
 */
 unsigned long mozziMicros();
 
+/** @ingroup core
+Returns the current state of the audio output buffer (i.e. the number of samples
+buffered). The primary purpose of this function is to use it for performance analysis,
+i.e. finding out which portions of the code are draining the buffer (which is not _only_
+a function of the time spent, but also of time spent in the main loop (updateAuio() is
+called from that) versus from an interrupt.
 
+However, this can also be used e.g. to postpone handling of user input or MIDI events
+while the output buffer is critically low.
+
+@return the raw number of samples from 0 to 255
+*/
+uint8_t bufferedSamples ();
 
 
 // internal use

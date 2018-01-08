@@ -73,7 +73,10 @@ PWM frequency tests
 
 //-----------------------------------------------------------------------------------------------------------------
 // ring buffer for audio output
-CircularBuffer <unsigned int> output_buffer; // fixed size 256
+CircularBuffer16 <uint16_t, 512> output_buffer; // fixed size 256
+uint8_t bufferedSamples() {
+    output_buffer.available ();
+}
 #if (STEREO_HACK == true)
 CircularBuffer <unsigned int> output_buffer2; // fixed size 256
 #endif
