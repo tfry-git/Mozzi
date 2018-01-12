@@ -74,6 +74,9 @@ PWM frequency tests
 //-----------------------------------------------------------------------------------------------------------------
 // ring buffer for audio output
 CircularBuffer <unsigned int> output_buffer; // fixed size 256
+uint8_t bufferedSamples() {
+	return (output_buffer.available ());
+}
 #if (STEREO_HACK == true)
 CircularBuffer <unsigned int> output_buffer2; // fixed size 256
 #endif
@@ -730,8 +733,6 @@ unsigned long mozziMicros()
 {
 	return audioTicks() * MICROS_PER_AUDIO_TICK;
 }
-
-
 
 // Unmodified TimerOne.cpp has TIMER3_OVF_vect.
 // Watch out if you update the library file.

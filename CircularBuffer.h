@@ -20,12 +20,12 @@ public:
 	}
 
 	inline
-	bool isFull() {
+	bool isFull() const {
 		return end == start && e_msb != s_msb;
 	}
 
 	inline
-	bool isEmpty() {
+	bool isEmpty() const {
 		return end == start && e_msb == s_msb;
 	}
 
@@ -44,10 +44,14 @@ public:
 	}
 
 	inline
-	unsigned long count() {
+	unsigned long count() const {
 		return (num_buffers_read << 8) + start;
 	}
 
+	inline uint8_t available() const {
+		if (isFull()) return 255;
+		return end-start;
+	}
 private:
 	ITEM_TYPE items[256];
 	uint8_t         start;  /* index of oldest itement              */
