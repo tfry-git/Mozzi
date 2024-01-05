@@ -20,6 +20,13 @@
  #include "WProgram.h"
 #endif
 
+#include "detect_github_runner.h"
+#if IN_GITHUB_RUNNER == 1
+#warning In github runner!
+#else
+#error Experiment failed
+#endif
+
 #include "hardware_defines.h"
 
 #if IS_TEENSY3() || IS_TEENSY4()
