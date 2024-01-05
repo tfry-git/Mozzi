@@ -20,8 +20,7 @@
  #include "WProgram.h"
 #endif
 
-#include "detect_github_runner.h"
-#if IN_GITHUB_RUNNER == 1
+#if __has_include("detect_github_runner.h")
 #warning In github runner!
 #else
 #error Experiment failed
