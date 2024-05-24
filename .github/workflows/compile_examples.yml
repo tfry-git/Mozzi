@@ -110,6 +110,7 @@ jobs:
             - name: MIDI Library
             - name: Arduino_AdvancedAnalog
           enable-deltas-report: true
+          enable-warnings-report: true
           sketches-report-path: ${{ env.SKETCHES_REPORTS_PATH }}
 
       - name: Save sketches report as workflow artifact
@@ -134,6 +135,6 @@ jobs:
           merge-multiple: true
           path: ${{ env.SKETCHES_REPORTS_PATH }}
 
-      - uses: arduino/report-size-deltas@v1
+      - uses: tfry-git/report-size-deltas
         with:
           sketches-reports-source: ${{ env.SKETCHES_REPORTS_PATH }}
