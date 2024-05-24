@@ -27,6 +27,8 @@
 #include <ADC.h>
 #endif
 
+#warning This warning is purely for testing
+
 #include "mozzi_analog.h"
 
 #if not defined (CONTROL_RATE)
