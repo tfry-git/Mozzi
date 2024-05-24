@@ -135,6 +135,6 @@ jobs:
           merge-multiple: true
           path: ${{ env.SKETCHES_REPORTS_PATH }}
 
-      - uses: tfry-git/report-size-deltas
+      - uses: tfry-git/report-size-deltas@main
         with:
           sketches-reports-source: ${{ env.SKETCHES_REPORTS_PATH }}
