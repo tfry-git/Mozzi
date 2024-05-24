@@ -10,35 +10,47 @@
  *
  */
 
-/** README! 
- * This file is meant to be used as a template when adding support for a new platform. Please read these instructions, first.
- *
- *  Files involved:
- *  1. Modify hardware_defines.h, adding a macro to detect your target platform
- *  2. Modify MozziGuts.cpp to include MozziGuts_impl_YOURPLATFORM.hpp
- *  3. Modify MozziGuts.h to include AudioConfigYOURPLATFORM.h
- *  4. Copy this file to MozziGuts_impl_YOURPLATFORM.hpp and adjust as necessary
- *  (If your platform is very similar to an existing port, it may instead be better to modify the existing MozziGuts_impl_XYZ.hpp/AudioConfigYOURPLATFORM.h,
- *  instead of steps 2-3.).
- *  Some platforms may need small modifications to other files as well, e.g. mozzi_pgmspace.h
- *
- *  How to implement MozziGuts_impl_YOURPLATFORM.hpp:
- *  - Follow the NOTEs provided in this file
- *  - Read the doc at the top of AudioOutput.h for a better understanding of the basic audio output framework
- *  - Take a peek at existing implementations for other hardware (e.g. TEENSY3/4 is rather complete while also simple at the time of this writing)
- *  - Wait for more documentation to arrive
- *  - Ask when in doubt
- *  - Don't forget to provide a PR when done (it does not have to be perfect; e.g. many ports skip analog input, initially)
- */
-
-// The main point of this check is to document, what platform & variants this implementation file is for.
-#if !(IS_MYPLATFORM())
+#if !(IS_MBED())
 #  error "Wrong implementation included for this platform"
 #endif
-// Add platform specific includes and declarations, here
 
+#define CHUNKSIZE 64
 
 ////// BEGIN analog input code ////////
+
+#if (USE_AUDIO_INPUT)
+#define AUDIO_INPUT_MODE AUDIO_INPUT_CUSTOM
+
+#include <Arduino_AdvancedAnalog.h>
+
+AdvancedADC adc(AUDIO_INPUT_PIN);
+Sample inbuf[CHUNKSIZE];
+int inbufpos=0; 
+
+bool audioInputAvailable() {
+  if (inbufpos >= CHUNKSIZE) {
+    if (!adc.available()) return false;
+    SampleBuffer buf = adc.read();
+    memcpy(inbuf,buf.data(), CHUNKSIZE*sizeof(Sample));
+    inbufpos = 0;
+    buf.release();
+    return true;
+  }
+  else return true;
+}
+AudioOutputStorage_t readAudioInput(){
+  return inbuf[inbufpos++];
+}
+
+
+static void startAudioInput() {
+  if (!adc.begin(AN_RESOLUTION_12, AUDIO_RATE, CHUNKSIZE, 256/CHUNKSIZE)) {
+    Serial.println("Failed to start analog acquisition!");
+    while (1);
+  }
+}
+#endif
+
 
 /** NOTE: This section deals with implementing (fast) asynchronous analog reads, which form the backbone of mozziAnalogRead(), but also of USE_AUDIO_INPUT (if enabled).
  *  This template provides empty/dummy implementations to allow you to skip over this section, initially. Once you have an implementation, be sure to enable the
@@ -88,6 +100,9 @@ void setupFastAnalogRead(int8_t speed) {
  *  possibly calibration. */
 void setupMozziADC(int8_t speed) {
 #warning Fast analog read not implemented on this platform
+  #if (USE_AUDIO_INPUT)
+      startAudioInput();
+  #endif
 }
 
 /* NOTE: Most platforms call a specific function/ISR when conversion is complete. Provide this function, here.
@@ -96,41 +111,124 @@ void stm32_adc_eoc_handler() {
   advanceADCStep();
 }
 */
+
+
+
 ////// END analog input code ////////
 
 ////// BEGIN audio output code //////
-/* NOTE: Some platforms rely on control returning from loop() every so often. However, updateAudio() may take too long (it tries to completely fill the output buffer,
- * which of course is being drained at the same time, theoretically it may not return at all). If you set this define, it will be called once per audio frame to keep things
- * running smoothly. */
-//#define LOOP_YIELD yield();
+#if (EXTERNAL_AUDIO_OUTPUT == true)
 
-/* NOTE: On some platforms, what can be called in the ISR used to output the sound is limited.
- * This define can be used, for instance, to output the sound in audioHook() instead to overcome
- * this limitation (see MozziGuts_impl_MBED.hpp). It can also be used if something needs to be called in audioHook() regarding
- * analog reads for instance. */
-//#define AUDIO_HOOK_HOOK
+#define US_PER_AUDIO_TICK (1000000L / AUDIO_RATE)
+#include <mbed.h>
+mbed::Ticker audio_output_timer;
 
-#if (EXTERNAL_AUDIO_OUTPUT != true) // otherwise, the last stage - audioOutput() - will be provided by the user
-/** NOTE: This is the function that actually write a sample to the output. In case of EXTERNAL_AUDIO_OUTPUT == true, it is provided by the library user, instead. */
-inline void audioOutput(const AudioOutput f) {
-  // e.g. analogWrite(AUDIO_CHANNEL_1_PIN, f.l()+AUDIO_BIAS);
-#if (AUDIO_CHANNELS > 1)
-  // e.g. analogWrite(AUDIO_CHANNEL_2_PIN, f.r()+AUDIO_BIAS);
-#endif
+volatile bool audio_output_requested = false;
+inline void defaultAudioOutputCallback() {
+  audio_output_requested = true;
 }
-#endif
+
+#define AUDIO_HOOK_HOOK { if (audio_output_requested) { audio_output_requested = false; defaultAudioOutput(); } }
 
 static void startAudio() {
-  // Add here code to get audio output going. This usually involves:
-  // 1) setting up some DAC mechanism (e.g. setting up a PWM pin with appropriate resolution
-  // 2a) setting up a timer to call defaultAudioOutput() at AUDIO_RATE
-  // OR 2b) setting up a buffered output queue such as I2S (see ESP32 / ESP8266 for examples for this setup)
-#if (EXTERNAL_AUDIO_OUTPUT != true)
-  // remember that the user may configure EXTERNAL_AUDIO_OUTPUT, in which case, you'll want to provide step 2a), and only that.
+  audio_output_timer.attach_us(&defaultAudioOutputCallback, US_PER_AUDIO_TICK);
+}
+
+void stopMozzi() {
+  audio_output_timer.detach();
+}
+
+#elif (MBED_AUDIO_OUT_MODE == INTERNAL_DAC)
+
+#include <Arduino_AdvancedAnalog.h>
+
+AdvancedDAC dac1(AUDIO_CHANNEL_1_PIN);
+Sample buf1[CHUNKSIZE];
+#if (AUDIO_CHANNELS > 1)
+AdvancedDAC dac2(AUDIO_CHANNEL_2_PIN);
+Sample buf2[CHUNKSIZE];
+#endif
+int bufpos = 0;
+
+inline void commitBuffer(Sample buffer[], AdvancedDAC &dac) {
+  SampleBuffer dmabuf = dac.dequeue();
+  // NOTE: Yes, this is silly code, and originated as an accident. Somehow it appears to help _a little_ against current problem wrt DAC stability
+  for (unsigned int i=0;i<CHUNKSIZE;i++) memcpy(dmabuf.data(), buffer, CHUNKSIZE*sizeof(Sample));
+  dac.write(dmabuf);
+}
+
+/** NOTE: This is the function that actually write a sample to the output. In case of EXTERNAL_AUDIO_OUTPUT == true, it is provided by the library user, instead. */
+inline void audioOutput(const AudioOutput f) {
+  if (bufpos >= CHUNKSIZE) {
+    commitBuffer(buf1, dac1);
+#if (AUDIO_CHANNELS > 1)
+    commitBuffer(buf2, dac2);
+#endif
+    bufpos = 0;
+  }
+  buf1[bufpos] = f.l()+AUDIO_BIAS;
+#if (AUDIO_CHANNELS > 1)
+  buf2[bufpos] = f.r()+AUDIO_BIAS;
+#endif
+  ++bufpos;
+}
+
+bool canBufferAudioOutput() {
+  return (bufpos < CHUNKSIZE || (dac1.available()
+#if (AUDIO_CHANNELS > 1)
+    && dac2.available()
+#endif
+  ));
+}
+
+static void startAudio() {
+  //NOTE: DAC setup currently affected by https://github.com/arduino-libraries/Arduino_AdvancedAnalog/issues/35 . Don't expect this to work, until using a fixed version fo Arduino_AdvancedAnalog!
+  if (!dac1.begin(AN_RESOLUTION_12, AUDIO_RATE, CHUNKSIZE, 256/CHUNKSIZE)) {
+    Serial.println("Failed to start DAC1 !");
+    while (1);
+  }
+#if (AUDIO_CHANNELS > 1)
+  if (!dac2.begin(AN_RESOLUTION_12, AUDIO_RATE, CHUNKSIZE, 256/CHUNKSIZE)) {
+    Serial.println("Failed to start DAC2 !");
+    while (1);
+  }
 #endif
 }
 
 void stopMozzi() {
-  // Add here code to pause whatever mechanism moves audio samples to the output
+  dac1.stop();
+#if (AUDIO_CHANNELS > 1)
+  dac2.stop();
+#endif
 }
+
+#elif (MBED_AUDIO_OUT_MODE == PDM_VIA_SERIAL)
+
+#include <mbed.h>
+
+mbed::BufferedSerial serial_out1(digitalPinToPinName(PDM_SERIAL_UART_TX_CHANNEL_1), digitalPinToPinName(PDM_SERIAL_UART_RX_CHANNEL_1));
+uint8_t buf[PDM_RESOLUTION*4];
+
+bool canBufferAudioOutput() {
+  return serial_out1.writable();
+}
+
+inline void audioOutput(const AudioOutput f) {
+  for (uint8_t i = 0; i < PDM_RESOLUTION*4; ++i) {
+    buf[i] = pdmCode8(f.l()+AUDIO_BIAS);
+  }
+  serial_out1.write(&buf, PDM_RESOLUTION*4);
+}
+
+static void startAudio() {
+  serial_out1.set_baud(AUDIO_RATE*PDM_RESOLUTION*40); // NOTE: 40 = 4 * (8 bits + stop-bits)
+  serial_out1.set_format(8, mbed::BufferedSerial::None, 1);
+}
+
+void stopMozzi() {
+#warning implement me
+}
+
+
+#endif
 ////// END audio output code //////
